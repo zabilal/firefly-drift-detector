@@ -1,0 +1,33 @@
+{
+  "InstanceId": "i-1234567890abcdef0",
+  "InstanceType": "t2.micro",
+  "ImageId": "ami-0c55b159cbfafe1f0",
+  "VpcId": "vpc-123456",
+  "SubnetId": "subnet-123456",
+  "KeyName": "my-key-pair",
+  "PublicIpAddress": "203.0.113.12",
+  "PrivateIpAddress": "10.0.1.5",
+  "State": {
+    "Name": "running"
+  },
+  "SecurityGroups": [
+    {
+      "GroupId": "sg-123456",
+      "GroupName": "my-security-group"
+    }
+  ],
+  "Tags": [
+    {
+      "Key": "Name",
+      "Value": "test-instance"
+    },
+    {
+      "Key": "Environment",
+      "Value": "production"
+    },
+    {
+      "Key": "ManagedBy",
+      "Value": "terraform"
+    }
+  ]
+}
