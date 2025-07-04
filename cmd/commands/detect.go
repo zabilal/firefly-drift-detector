@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,15 +21,24 @@ func NewDetectCmd() *cobra.Command {
 		instanceID string
 		tfState    string
 		tfDir      string
+		mockMode   bool
+		mockFile   string
 	)
 
 	cmd := &cobra.Command{
 		Use:   "detect",
 		Short: "Detect configuration drift for an EC2 instance",
 		Long: `Detect configuration drift for an EC2 instance by comparing its current
-AWS configuration with the Terraform state or configuration.`,
+AWS configuration with the Terraform state or configuration.
+
+This command can run in two modes:
+1. Live mode (default): Connects to AWS to fetch current instance configuration
+2. Mock mode (--mock): Uses a local JSON file for testing without AWS credentials`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDetect(cmd, instanceID, tfState, tfDir, args)
+			if mockMode && mockFile == "" {
+				return fmt.Errorf("--mock-file is required when --mock is enabled")
+			}
+			return runDetect(cmd, instanceID, tfState, tfDir, mockMode, mockFile, args)
 		},
 	}
 
@@ -36,6 +46,8 @@ AWS configuration with the Terraform state or configuration.`,
 	cmd.Flags().StringVarP(&instanceID, "instance", "i", "", "EC2 instance ID to check for drift")
 	cmd.Flags().StringVarP(&tfState, "tf-state", "s", "", "Path to Terraform state file")
 	cmd.Flags().StringVarP(&tfDir, "tf-dir", "d", ".", "Path to Terraform configuration directory")
+	cmd.Flags().BoolVar(&mockMode, "mock", false, "Enable mock mode (uses local JSON file instead of AWS)")
+	cmd.Flags().StringVar(&mockFile, "mock-file", "", "Path to JSON file containing mock EC2 instance data (required for mock mode)")
 
 	// Mark required flags
 	cmd.MarkFlagRequired("instance")
@@ -73,7 +85,66 @@ func findMatchingConfig(awsConfig *models.InstanceConfig, tfConfigs []*models.In
 	return nil
 }
 
-func runDetect(cmd *cobra.Command, instanceID, tfState, tfDir string, args []string) error {
+// validateMockConfig validates the structure of the mock configuration
+func validateMockConfig(config *models.InstanceConfig) error {
+	if config.InstanceID == "" {
+		return fmt.Errorf("mock configuration must include InstanceID")
+	}
+
+	// Validate tags if present
+	if config.Tags == nil {
+		config.Tags = make(map[string]string)
+	}
+
+	// Validate security groups if present
+	for i, sg := range config.SecurityGroups {
+		if sg.GroupID == "" {
+			return fmt.Errorf("security group at index %d is missing GroupID", i)
+		}
+	}
+
+	return nil
+}
+
+// loadMockConfig loads and validates instance configuration from a local JSON file
+func loadMockConfig(filePath, instanceID string) (*models.InstanceConfig, error) {
+	// Check if file exists and is readable
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to access mock file: %v", err)
+	}
+
+	// Check if it's a regular file
+	if info.IsDir() {
+		return nil, fmt.Errorf("mock file path is a directory, expected a file")
+	}
+
+	// Read the file
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read mock file: %v", err)
+	}
+
+	// Parse the JSON into our model
+	var config models.InstanceConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil, fmt.Errorf("failed to parse mock configuration: %v", err)
+	}
+
+	// Override instance ID if needed
+	if instanceID != "" {
+		config.InstanceID = instanceID
+	}
+
+	// Validate the configuration
+	if err := validateMockConfig(&config); err != nil {
+		return nil, fmt.Errorf("invalid mock configuration: %v", err)
+	}
+
+	return &config, nil
+}
+
+func runDetect(cmd *cobra.Command, instanceID, tfState, tfDir string, mockMode bool, mockFile string, args []string) error {
 	// Initialize logger
 	log := logger.NewLogger(logger.Config{
 		Level:  logger.LevelInfo,
@@ -89,18 +160,30 @@ func runDetect(cmd *cobra.Command, instanceID, tfState, tfDir string, args []str
 		return fmt.Errorf("either --tf-state or --tf-dir must be specified")
 	}
 
-	// Initialize AWS client
-	log.Info("Initializing AWS client...")
-	awsClient, err := aws.NewEC2Client(context.Background(), awsRegion)
-	if err != nil {
-		return fmt.Errorf("failed to create AWS client: %v", err)
-	}
+	var awsConfig *models.InstanceConfig
+	var err error
 
-	// Get current instance configuration from AWS
-	log.Info("Fetching instance configuration from AWS...", "instance_id", instanceID)
-	awsConfig, err := awsClient.GetInstanceConfig(cmd.Context(), instanceID)
-	if err != nil {
-		return fmt.Errorf("failed to get instance config from AWS: %v", err)
+	if mockMode {
+		// Mock mode: Load configuration from file
+		log.Info("Running in mock mode, loading instance configuration from file...", "file", mockFile)
+		awsConfig, err = loadMockConfig(mockFile, instanceID)
+		if err != nil {
+			return fmt.Errorf("failed to load mock configuration: %v", err)
+		}
+	} else {
+		// Live mode: Connect to AWS
+		log.Info("Initializing AWS client...")
+		awsClient, err := aws.NewEC2Client(context.Background(), awsRegion)
+		if err != nil {
+			return fmt.Errorf("failed to create AWS client: %v\n\nNote: To run without AWS credentials, use --mock with --mock-file", err)
+		}
+
+		// Get current instance configuration from AWS
+		log.Info("Fetching instance configuration from AWS...", "instance_id", instanceID)
+		awsConfig, err = awsClient.GetInstanceConfig(cmd.Context(), instanceID)
+		if err != nil {
+			return fmt.Errorf("failed to get instance config from AWS: %v\n\nNote: To run without AWS credentials, use --mock with --mock-file", err)
+		}
 	}
 
 	// Parse Terraform configuration

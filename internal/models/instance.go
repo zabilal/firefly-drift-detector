@@ -1,5 +1,7 @@
 package models
 
+import "encoding/json"
+
 // InstanceConfig represents the configuration of an EC2 instance
 type InstanceConfig struct {
     // Basic instance information
@@ -8,6 +10,9 @@ type InstanceConfig struct {
     AMI              string            `json:"ami"`
     KeyName          string            `json:"key_name"`
     Tags             map[string]string `json:"tags"`
+    
+    // RawTags is used for custom unmarshaling
+    RawTags          interface{}       `json:"-"`
     
     // Networking
     VPCID                   string         `json:"vpc_id"`
@@ -66,6 +71,58 @@ type InstanceConfig struct {
     EBSBlockDevices       []*EBSBlockDevice       `json:"ebs_block_devices,omitempty"`
     EphemeralBlockDevices []*EphemeralBlockDevice `json:"ephemeral_block_devices,omitempty"`
     NetworkInterfaces     []*NetworkInterface      `json:"network_interfaces,omitempty"`
+}
+
+// tagPair represents a single key-value tag pair as used in AWS API responses
+type tagPair struct {
+    Key   string `json:"Key"`
+    Value string `json:"Value"`
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling for InstanceConfig
+// to handle both map and array formats for tags
+func (ic *InstanceConfig) UnmarshalJSON(data []byte) error {
+    // Define a shadow type to avoid recursion
+    type Alias InstanceConfig
+    aux := &struct {
+        *Alias
+        RawTags interface{} `json:"tags"`
+    }{
+        Alias: (*Alias)(ic),
+    }
+
+    // Unmarshal the main structure
+    if err := json.Unmarshal(data, &aux); err != nil {
+        return err
+    }
+
+    // Handle tags conversion
+    if aux.RawTags != nil {
+        switch v := aux.RawTags.(type) {
+        case map[string]interface{}:
+            // Tags are already in map format
+            ic.Tags = make(map[string]string)
+            for k, val := range v {
+                if strVal, ok := val.(string); ok {
+                    ic.Tags[k] = strVal
+                }
+            }
+        case []interface{}:
+            // Tags are in array format: [{"Key": "Name", "Value": "example"}]
+            ic.Tags = make(map[string]string)
+            for _, item := range v {
+                if tagMap, ok := item.(map[string]interface{}); ok {
+                    if key, keyOk := tagMap["Key"].(string); keyOk {
+                        if val, valOk := tagMap["Value"].(string); valOk {
+                            ic.Tags[key] = val
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return nil
 }
 
 // Supporting types

@@ -10,6 +10,7 @@ A Go-based command-line tool to detect configuration drift between AWS EC2 insta
 - **Concurrent Processing**: Check multiple instances in parallel
 - **Detailed Reports**: Clear, structured output of configuration differences
 - **Versioning**: Built-in version tracking
+- **Offline Testing**: Mock mode for testing without AWS credentials
 
 ## 🚀 Installation
 
@@ -48,6 +49,74 @@ make install
 ```bash
 driftdetector version
 ```
+
+## 🛠️ Mock Mode
+
+The tool supports a mock mode that allows you to test drift detection without connecting to AWS. This is useful for development, testing, and CI/CD pipelines.
+
+### Using Mock Mode
+
+1. Create a JSON file with the instance configuration you want to test against. Example:
+   ```json
+   {
+     "InstanceId": "i-1234567890abcdef0",
+     "InstanceType": "t2.micro",
+     "ImageId": "ami-0c55b159cbfafe1f0",
+     "Tags": [
+       {"Key": "Name", "Value": "test-instance"},
+       {"Key": "Environment", "Value": "test"}
+     ]
+   }
+   ```
+
+2. Run the detect command with mock mode:
+   ```bash
+   driftdetector detect \
+     --instance i-1234567890abcdef0 \
+     --tf-dir /path/to/terraform \
+     --mock \
+     --mock-file /path/to/mock.json
+   ```
+
+### Test Cases
+
+Sample test cases are provided in the `testdata/mock_tests/` directory:
+
+1. `instance_type_drift.json` - Tests instance type drift detection
+2. `security_group_drift.json` - Tests security group drift detection
+3. `tag_drift.json` - Tests tag drift detection
+
+Run all test cases:
+```bash
+chmod +x test_mock_cases.sh
+./test_mock_cases.sh
+```
+
+### Mock File Format
+
+The mock JSON file should follow this structure (all fields are optional except `InstanceId`):
+
+```json
+{
+  "InstanceId": "i-1234567890abcdef0",
+  "InstanceType": "t2.micro",
+  "ImageId": "ami-0c55b159cbfafe1f0",
+  "VpcId": "vpc-123456",
+  "SubnetId": "subnet-123456",
+  "KeyName": "my-key-pair",
+  "PublicIpAddress": "203.0.113.12",
+  "PrivateIpAddress": "10.0.1.5",
+  "Tags": [
+    {"Key": "Name", "Value": "test-instance"},
+    {"Key": "Environment", "Value": "test"}
+  ],
+  "SecurityGroups": [
+    {"GroupId": "sg-123456", "GroupName": "my-sg"}
+  ]
+}
+```
+
+> **Note**: The `Tags` field can be either an array of objects with `Key`/`Value` pairs or a simple key-value object.
 
 This should display the version information if installed correctly.
 
