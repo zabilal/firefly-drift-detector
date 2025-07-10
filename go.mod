@@ -1,4 +1,4 @@
-module github.com/yourusername/driftdetector
+module driftdetector
 
 go 1.24.0
 
